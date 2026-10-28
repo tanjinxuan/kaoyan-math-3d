@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>考研数学 3D 几何可视化 · 网页版</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #0b0f19; font-family: system-ui, sans-serif; }
+    canvas { display: block; }
+    .panel { background: rgba(15, 23, 42, .92); backdrop-filter: blur(14px); border: 1px solid rgba(71, 85, 105, .55); box-shadow: 0 16px 48px rgba(0, 0, 0, .28); max-height: calc(100vh - 32px); overflow-y: auto; }
+    .left-panel.code-mode { width: min(900px, calc(100vw - 32px)); }
+    body.code-fullscreen { background: #0b0f19; }
+    body.code-fullscreen canvas { display: none; }
+    body.code-fullscreen .left-panel.code-mode {
+      position: fixed; inset: 0; width: 100vw; height: 100vh; max-height: 100vh;
+      border: 0; border-radius: 0; padding: 20px; overflow-y: auto;
+    }
+    body.code-fullscreen .left-panel.code-mode > .mt-3 { display: none; }
+    body.python-only-view .left-panel.code-mode > h1,
+    body.python-only-view .left-panel.code-mode > .mode-tabs,
+    body.python-only-view .right-panel { display: none !important; }
+    body.python-only-view .left-panel.code-mode { padding: 0; overflow: hidden; background: #0b0f19; }
+    body.python-only-view #codePanel { position: fixed; inset: 0; padding: 0; }
+    body.python-only-view #pythonCodeSection,
+    body.python-only-view #pythonVisualView { display: block; }
+    body.python-only-view #pythonPlot { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    body.python-only-view #editPythonCode { position: fixed; top: 12px; right: 16px; z-index: 20; }
+    input[type="text"] { outline: none; }
+    input[type="text"]:focus { border-color: #06b6d4; box-shadow: 0 0 0 2px rgba(6, 182, 212, .16); }
+    button { transition: background-color .16s ease, transform .16s ease; }
+    button:active { transform: translateY(1px); }
+    @media (max-width: 760px) {
+      .left-panel { top: 10px !important; left: 10px !important; width: min(310px, calc(100vw - 20px)) !important; }
+      .right-panel { top: 10px !important; right: 10px !important; width: min(195px, calc(100vw - 20px)) !important; }
+      .bottom-hint { display: none; }
+      .panel { padding: 11px !important; }
+    }
+    @media (max-width: 560px) {
+      .left-panel { position: absolute; width: calc(100vw - 20px) !important; }
+      .right-panel { top: auto !important; bottom: 10px !important; width: calc(100vw - 20px) !important; }
+      .right-panel .layer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+    }
+  </style>
+</head>
+<body class="text-white select-none">
+  <section class="panel left-panel absolute top-4 left-4 z-10 w-80 rounded-xl p-4">
+    <h1 class="mb-1 flex items-center justify-between text-sm font-bold text-cyan-300">
+      <span>考研数学 · 3D 几何可视化</span>
+    </h1>
+    <div class="mode-tabs mb-3 grid grid-cols-3 gap-1 text-[11px]">
+      <button class="modeBtn rounded bg-cyan-700 px-2 py-1.5 text-white" data-mode="equation">方程作图</button>
+      <button class="modeBtn rounded bg-slate-800 px-2 py-1.5 text-slate-300" data-mode="solid">有界立体</button>
+      <button class="modeBtn rounded bg-slate-800 px-2 py-1.5 text-slate-300" data-mode="code">粘贴代码</button>
+    </div>
+
+    <div id="equationPanel" class="space-y-3 text-xs">
+      <p class="text-[11px] leading-relaxed text-slate-400">输入方程生成曲面；支持 z = f(x,y) 曲面和线性竖直平面（如 x = y）。竖直平面会在 x、y、z ∈ [-L,L] 内显示。</p>
+      <label class="block"><span class="mb-1 block font-medium text-slate-300">方程</span>
+        <input type="text" id="equationExpr" value="x + y + z = 1" autocomplete="off" spellcheck="false" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-2 text-cyan-200">
+      </label>
+      <label class="block"><span class="mb-1 block font-medium text-slate-300">绘图区间：x、y ∈ [-L, L]</span>
+        <input type="number" id="domainL" value="3" min="0.1" step="0.5" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-2 text-cyan-200">
+      </label>
+      <button id="equationBtn" class="w-full rounded-lg bg-cyan-700 py-2 font-medium hover:bg-cyan-600">生成方程图像</button>
+      <p id="equationError" class="hidden rounded-lg border border-rose-500/30 bg-rose-950/40 px-2 py-1.5 leading-relaxed text-rose-200" role="alert"></p>
+      <p class="text-[11px] text-slate-500">示例：x = y、x + y + z = 1、z = x^2 + y^2、z = sin(x) + cos(y)</p>
+    </div>
+
+    <div id="solidPanel" class="hidden space-y-3 text-xs">
+      <p class="text-[11px] leading-relaxed text-slate-400">区域 Ω：下底面 ≤ z ≤ 上顶面，投影域 D：x² + y² ≤ R²</p>
+
+    <div class="space-y-3 text-xs">
+      <label class="block">
+        <span class="mb-1 block font-medium text-slate-300">上顶面方程 z =</span>
+        <input type="text" id="topExpr" value="1 - x" autocomplete="off" spellcheck="false" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-cyan-200">
+      </label>
+      <label class="block">
+        <span class="mb-1 block font-medium text-slate-300">下底面方程 z =</span>
+        <input type="text" id="bottomExpr" value="0" autocomplete="off" spellcheck="false" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-cyan-200">
+      </label>
+      <label class="block">
+        <span class="mb-1 block font-medium text-slate-300">圆形投影域半径 R =</span>
+        <input type="text" id="radiusExpr" value="1" inputmode="decimal" autocomplete="off" class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-cyan-200">
+      </label>
+      <button id="updateBtn" type="button" class="mt-1 w-full rounded-lg bg-cyan-700 py-2 font-medium text-white shadow-md hover:bg-cyan-600">
+        重新生成 3D 模型
+      </button>
+      <p id="errorMessage" class="hidden rounded-lg border border-rose-500/30 bg-rose-950/40 px-2 py-1.5 leading-relaxed text-rose-200" role="alert"></p>
+    </div>
+    </div>
+
+    <div id="codePanel" class="hidden space-y-2 text-xs">
+      <div class="grid grid-cols-2 gap-1">
+        <button id="htmlCodeMode" class="rounded bg-cyan-700 px-2 py-1.5 text-white">HTML / JavaScript</button>
+        <button id="pythonCodeMode" class="rounded bg-slate-800 px-2 py-1.5 text-slate-300">Python / Plotly</button>
+      </div>
+      <div id="htmlCodeSection">
+      <p class="mb-2 text-[11px] leading-relaxed text-slate-400">粘贴完整 HTML 页面（含 Three.js / Plotly 等脚本），点击预览。代码在隔离的预览框中运行。</p>
+      <textarea id="htmlCode" spellcheck="false" placeholder="<!doctype html>\n<html>\n  ...粘贴你的完整 HTML 代码...\n</html>" class="h-44 w-full resize-y rounded border border-slate-700 bg-slate-950 p-2 font-mono text-[11px] text-cyan-100"></textarea>
+      <button id="previewCodeBtn" class="w-full rounded-lg bg-cyan-700 py-2 font-medium hover:bg-cyan-600">预览 HTML 代码</button>
+      <p id="codeError" class="hidden text-rose-300" role="alert"></p>
+      <iframe id="codePreview" title="代码预览" sandbox="allow-scripts allow-forms" class="hidden h-[45vh] min-h-64 w-full rounded border border-slate-700 bg-white"></iframe>
+      </div>
+      <div id="pythonCodeSection" class="hidden">
+        <div id="pythonEditorView">
+          <p class="mb-2 text-[11px] leading-relaxed text-slate-400">Python 在浏览器中运行。首次运行会下载 Python、NumPy 和 Plotly；代码不会上传到服务器。</p>
+          <textarea id="pythonCode" spellcheck="false" class="h-64 w-full resize-y rounded border border-slate-700 bg-slate-950 p-2 font-mono text-[11px] text-cyan-100">import numpy as np
+import plotly.graph_objects as go
+
+R = 3
+theta = np.linspace(0, 2*np.pi, 100)
+phi = np.linspace(0, np.pi, 60)
+THETA, PHI = np.meshgrid(theta, phi)
+Xs = R*np.sin(PHI)*np.cos(THETA)
+Ys = R*np.sin(PHI)*np.sin(THETA)
+Zs = R*np.cos(PHI)
+
+x = np.linspace(-3.5, 3.5, 50)
+y = np.linspace(-3.5, 3.5, 50)
+X, Y = np.meshgrid(x, y)
+Z = -X-Y
+
+t = np.linspace(0, 2*np.pi, 300)
+u = np.array([1, -1, 0])/np.sqrt(2)
+v = np.array([1, 1, -2])/np.sqrt(6)
+curve = R*(np.cos(t)[:, None]*u + np.sin(t)[:, None]*v)
+Xc, Yc, Zc = curve.T
+
+fig = go.Figure(data=[
+    go.Surface(x=Xs, y=Ys, z=Zs, name="球面", opacity=0.25, showscale=False),
+    go.Surface(x=X, y=Y, z=Z, name="平面 x+y+z=0", opacity=0.35, showscale=False),
+    go.Scatter3d(x=Xc, y=Yc, z=Zc, mode="lines", name="相交曲线", line=dict(color="red", width=8))
+])
+fig.update_layout(title="平面与球面的交线", scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z", aspectmode="cube"), template="plotly_dark")
+fig.show()</textarea>
+          <button id="runPythonCode" class="mt-2 w-full rounded-lg bg-cyan-700 py-2 font-medium hover:bg-cyan-600">运行并全屏预览</button>
+          <p id="pythonStatus" class="mt-2 text-[11px] text-slate-400" role="status"></p>
+        </div>
+        <div id="pythonVisualView" class="hidden">
+          <button id="editPythonCode" class="rounded-lg bg-slate-800/80 px-3 py-2 text-xs text-white">返回代码</button>
+          <div id="pythonPlot" aria-label="Python Plotly 图表"></div>
+        </div>
+        <iframe id="pyodideSandbox" title="浏览器内 Python 运行环境" sandbox="allow-scripts" class="hidden"></iframe>
+      </div>
+    </div>
+
+    <div class="mt-3 space-y-1 border-t border-slate-800 pt-3 text-[11px] text-slate-400">
+      <div>🔴 X 轴：正向朝向观察者</div>
+      <div>🟢 Y 轴：正向向右　🔵 Z 轴：正向向上</div>
+      <div class="pt-1 text-slate-500">表达式支持 + − × ÷、^、括号、隐式乘法（如 2z）、sin / cos / tan / sqrt / log。</div>
+    </div>
+  </section>
+
+  <section class="panel right-panel absolute top-4 right-4 z-10 flex w-64 flex-col gap-2 rounded-xl p-3 text-xs">
+    <h2 class="border-b border-slate-800 pb-2 font-semibold text-slate-200">图层显隐</h2>
+    <div id="solidLayers" class="layer-grid flex flex-col gap-2 text-slate-200">
+      <label class="flex cursor-pointer items-center gap-2"><input type="checkbox" id="toggleSolid" checked class="accent-cyan-500">立体区域 Ω</label>
+      <label class="flex cursor-pointer items-center gap-2"><input type="checkbox" id="toggleTop" checked class="accent-amber-500">上顶面</label>
+      <label class="flex cursor-pointer items-center gap-2"><input type="checkbox" id="toggleBottom" checked class="accent-sky-500">下底面</label>
+      <label class="flex cursor-pointer items-center gap-2"><input type="checkbox" id="toggleCyl" checked class="accent-teal-500">侧面围壁</label>
+      <label class="flex cursor-pointer items-center gap-2"><input type="checkbox" id="toggleProj" checked class="accent-emerald-500">底面投影 Dxy</label>
+    </div>
+    <div id="equationLayers" class="hidden text-slate-200"><label class="flex cursor-pointer items-center gap-2"><input type="checkbox" id="togglePlane" checked class="accent-cyan-500">显示曲面</label></div>
+    <button id="resetView" type="button" class="mt-1 rounded-lg bg-indigo-600 px-3 py-2 font-medium text-white shadow-md hover:bg-indigo-500">
+      重置视角（X 轴正向）
+    </button>
+  </section>
+
+  <div class="bottom-hint panel pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full px-4 py-2 text-[11px] text-slate-300">
+    鼠标左键拖拽旋转 · 滚轮缩放 · 右键平移
+  </div>
+
+  <script>
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0f19);
+    THREE.Object3D.DefaultUp.set(0, 0, 1);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.05, 2000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.domElement.setAttribute("aria-label", "可旋转的三维积分区域模型");
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.enablePan = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+    keyLight.intensity = 0.7;
+    keyLight.position.set(5, 4, 7);
+    scene.add(keyLight);
+
+    let axesGroup = new THREE.Group();
+    let grid = null;
+    let currentGroup = new THREE.Group();
+    scene.add(axesGroup, currentGroup);
+    let currentRadius = 1;
+    let currentCenterZ = 0.5;
+
+    const errorMessage = document.getElementById("errorMessage");
+    const mathFunctions = {
+      sin: Math.sin, cos: Math.cos, tan: Math.tan,
+      asin: Math.asin, acos: Math.acos, atan: Math.atan,
+      sqrt: Math.sqrt, abs: Math.abs, exp: Math.exp,
+      log: Math.log, log10: Math.log10,
+      min: Math.min, max: Math.max,
+    };
+
+    function compileExpression(source) {
+      source = source.trim();
+      if (!source) throw new Error("表达式不能为空");
+      const tokens = [];
+      const pattern = /\s*(?:(\d+(?:\.\d*)?|\.\d+)(?:([eE][+-]?\d+))?|([a-zA-Z_][a-zA-Z0-9_]*)|([()+\-*/^,]))/y;
+      let offset = 0;
+      while (offset < source.length) {
+        pattern.lastIndex = offset;
+        const match = pattern.exec(source);
+        if (!match) throw new Error(`表达式含有不支持的字符：${source[offset]}`);
+        offset = pattern.lastIndex;
+        if (match[1] !== undefined) tokens.push({ type: "number", value: Number(match[1] + (match[2] || "")) });
+        else if (match[3] !== undefined) tokens.push({ type: "name", value: match[3].toLowerCase() });
+        else tokens.push({ type: "symbol", value: match[4] });
+      }
+
+      let index = 0;
+      const peek = () => tokens[index];
+      const take = (value) => {
+        if (peek()?.value === value) { index += 1; return true; }
+        return false;
+      };
+      const expect = (value) => {
+        if (!take(value)) throw new Error(`表达式中缺少 “${value}”`);
+      };
+
+      function parsePrimary() {
+        const token = peek();
+        if (!token) throw new Error("表达式不完整");
+        if (take("(")) {
+          const value = parseExpression();
+          expect(")");
+          return value;
+        }
+        if (token.type === "number") {
+          index += 1;
+          return () => token.value;
+        }
+        if (token.type === "name") {
+          index += 1;
+          if (token.value === "x") return (x) => x;
+          if (token.value === "y") return (_x, y) => y;
+          if (token.value === "z") return (_x, _y, z) => z;
+          if (token.value === "pi") return () => Math.PI;
+          if (token.value === "e") return () => Math.E;
+          const fn = mathFunctions[token.value];
+          if (!fn) throw new Error(`不支持变量或函数：${token.value}`);
+          expect("(");
+          const args = [parseExpression()];
+          while (take(",")) args.push(parseExpression());
+          expect(")");
+          if ((token.value === "min" || token.value === "max") ? args.length < 2 : args.length !== 1) {
+            throw new Error(`${token.value} 的参数数量不正确`);
+          }
+          return (x, y, z) => fn(...args.map((arg) => arg(x, y, z)));
+        }
+        throw new Error(`表达式无法解析：${token.value}`);
+      }
+
+      function parsePower() {
+        const base = parsePrimary();
+        if (take("^")) {
+          const exponent = parseUnary();
+          return (x, y, z) => Math.pow(base(x, y, z), exponent(x, y, z));
+        }
+        return base;
+      }
+      function parseUnary() {
+        if (take("+")) return parseUnary();
+        if (take("-")) {
+          const value = parseUnary();
+          return (x, y, z) => -value(x, y, z);
+        }
+        return parsePower();
+      }
+      function parseTerm() {
+        let value = parseUnary();
+        while (true) {
+          const next = peek();
+          const explicitOperator = next?.value === "*" || next?.value === "/";
+          const implicitOperator = next && (
+            next.type === "number" || next.type === "name" || next.value === "("
+          );
+          if (!explicitOperator && !implicitOperator) break;
+          const operator = explicitOperator ? tokens[index++].value : "*";
+          const right = parseUnary();
+          const left = value;
+          value = operator === "*" ? (x, y, z) => left(x, y, z) * right(x, y, z) : (x, y, z) => left(x, y, z) / right(x, y, z);
+        }
+        return value;
+      }
+      function parseExpression() {
+        let value = parseTerm();
+        while (peek()?.value === "+" || peek()?.value === "-") {
+          const operator = tokens[index++].value;
+          const right = parseTerm();
+          const left = value;
+          value = operator === "+" ? (x, y, z) => left(x, y, z) + right(x, y, z) : (x, y, z) => left(x, y, z) - right(x, y, z);
+        }
+        return value;
+      }
+
+      const evaluator = parseExpression();
+      if (index !== tokens.length) throw new Error(`表达式中有多余内容：${tokens[index].value}`);
+      return evaluator;
+    }
+
+    function makeDiskSurface(radius, zFunction, radialSteps = 24, angularSteps = 96) {
+      const positions = [];
+      const indices = [];
+      for (let row = 0; row <= radialSteps; row += 1) {
+        const r = radius * row / radialSteps;
+        for (let col = 0; col <= angularSteps; col += 1) {
+          const theta = 2 * Math.PI * col / angularSteps;
+          const x = r * Math.cos(theta);
+          const y = r * Math.sin(theta);
+          const z = zFunction(x, y);
+          if (!Number.isFinite(z)) throw new Error("曲面在投影区域内出现了无定义的高度");
+          positions.push(x, y, z);
+        }
+      }
+      for (let row = 0; row < radialSteps; row += 1) {
+        for (let col = 0; col < angularSteps; col += 1) {
+          const a = row * (angularSteps + 1) + col;
+          const b = a + 1;
+          const c = a + angularSteps + 1;
+          const d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    function makeRectSurface(xmin, xmax, ymin, ymax, zFunction, steps = 64) {
+      const positions = [];
+      const indices = [];
+      for (let row = 0; row <= steps; row += 1) {
+        const y = ymin + (ymax - ymin) * row / steps;
+        for (let col = 0; col <= steps; col += 1) {
+          const x = xmin + (xmax - xmin) * col / steps;
+          const z = zFunction(x, y);
+          if (!Number.isFinite(z)) throw new Error(`曲面在 (x, y)=(${x.toFixed(2)}, ${y.toFixed(2)}) 处无定义`);
+          positions.push(x, y, z);
+        }
+      }
+      for (let row = 0; row < steps; row += 1) {
+        for (let col = 0; col < steps; col += 1) {
+          const a = row * (steps + 1) + col;
+          const b = a + 1;
+          const c = a + steps + 1;
+          const d = c + 1;
+          indices.push(a, b, c, b, d, c);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    function makeSideWall(radius, topFunction, bottomFunction, angularSteps = 96, heightSteps = 20) {
+      const positions = [];
+      const indices = [];
+      for (let row = 0; row <= heightSteps; row += 1) {
+        const t = row / heightSteps;
+        for (let col = 0; col <= angularSteps; col += 1) {
+          const theta = 2 * Math.PI * col / angularSteps;
+          const x = radius * Math.cos(theta);
+          const y = radius * Math.sin(theta);
+          const zBottom = bottomFunction(x, y);
+          const zTop = topFunction(x, y);
+          const z = zBottom + t * (zTop - zBottom);
+          if (!Number.isFinite(z)) throw new Error("侧壁在边界上出现了无定义的高度");
+          positions.push(x, y, z);
+        }
+      }
+      for (let row = 0; row < heightSteps; row += 1) {
+        for (let col = 0; col < angularSteps; col += 1) {
+          const a = row * (angularSteps + 1) + col;
+          const b = a + 1;
+          const c = a + angularSteps + 1;
+          const d = c + 1;
+          indices.push(a, b, c, b, d, c);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    function makeMaterial(color, opacity, standard = true) {
+      const Material = standard ? THREE.MeshStandardMaterial : THREE.MeshBasicMaterial;
+      return new Material({ color, transparent: opacity < 1, opacity, side: THREE.DoubleSide, depthWrite: opacity >= 1 });
+    }
+
+    function disposeGroup(group) {
+      group.traverse((object) => {
+        if (object.geometry) object.geometry.dispose();
+        if (object.material) {
+          if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
+          else object.material.dispose();
+        }
+      });
+    }
+
+    function rebuildAxes(radius) {
+      disposeGroup(axesGroup);
+      scene.remove(axesGroup);
+      axesGroup = new THREE.Group();
+      const length = radius * 1.65;
+      const addAxis = (end, color) => {
+        const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), end]);
+        axesGroup.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color })));
+      };
+      addAxis(new THREE.Vector3(length, 0, 0), 0xff4d5a);
+      addAxis(new THREE.Vector3(0, length, 0), 0x4dd964);
+      addAxis(new THREE.Vector3(0, 0, length), 0x4d79ff);
+      scene.add(axesGroup);
+
+      if (grid) {
+        scene.remove(grid);
+        disposeGroup(grid);
+      }
+      grid = new THREE.GridHelper(radius * 3, 12, 0x53627a, 0x293344);
+      grid.rotation.x = Math.PI / 2;
+      grid.position.z = -0.015 * radius;
+      grid.material.transparent = true;
+      grid.material.opacity = 0.38;
+      scene.add(grid);
+    }
+
+    function setDefaultView(radius = currentRadius, centerZ = currentCenterZ) {
+      controls.target.set(0, 0, centerZ);
+      camera.position.set(radius * 4.5, radius * 1.5, centerZ + radius * 1.2);
+      camera.near = Math.max(0.02, radius * 0.02);
+      camera.far = Math.max(1000, radius * 100);
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function buildGeometry() {
+      errorMessage.classList.add("hidden");
+      const topText = document.getElementById("topExpr").value.trim();
+      const bottomText = document.getElementById("bottomExpr").value.trim();
+      const radius = Number(document.getElementById("radiusExpr").value.trim());
+      try {
+        if (!topText || !bottomText) throw new Error("请填写上顶面和下底面的 z 方程");
+        if (!Number.isFinite(radius) || radius <= 0) throw new Error("半径 R 必须是大于 0 的有限数字");
+        const topFunction = compileExpression(topText);
+        const bottomFunction = compileExpression(bottomText);
+        let minZ = Infinity;
+        let maxZ = -Infinity;
+        for (let i = 0; i <= 32; i += 1) {
+          const theta = 2 * Math.PI * i / 32;
+          const x = radius * Math.cos(theta);
+          const y = radius * Math.sin(theta);
+          const topZ = topFunction(x, y);
+          const bottomZ = bottomFunction(x, y);
+          if (!Number.isFinite(topZ) || !Number.isFinite(bottomZ)) {
+            throw new Error("方程在圆形投影区域边界上出现了无定义的高度");
+          }
+          minZ = Math.min(minZ, topZ, bottomZ);
+          maxZ = Math.max(maxZ, topZ, bottomZ);
+        }
+        const centerZ = (minZ + maxZ) / 2;
+        const nextGroup = new THREE.Group();
+        try {
+          const topMesh = new THREE.Mesh(
+            makeDiskSurface(radius, topFunction),
+            makeMaterial(0xf59e0b, 0.58, false),
+          );
+          topMesh.name = "topMesh";
+          nextGroup.add(topMesh);
+
+          const bottomMesh = new THREE.Mesh(
+            makeDiskSurface(radius, bottomFunction),
+            makeMaterial(0x0891b2, 0.42, false),
+          );
+          bottomMesh.name = "bottomMesh";
+          nextGroup.add(bottomMesh);
+
+          const sideMesh = new THREE.Mesh(
+            makeSideWall(radius, topFunction, bottomFunction),
+            makeMaterial(0x14b8a6, 0.34),
+          );
+          sideMesh.name = "cylMesh";
+          nextGroup.add(sideMesh);
+
+          const projection = new THREE.Mesh(
+            new THREE.CircleGeometry(radius, 96),
+            makeMaterial(0x10b981, 0.22, false),
+          );
+          projection.position.z = -0.025 * radius;
+          projection.name = "projMesh";
+          nextGroup.add(projection);
+          nextGroup.visible = document.getElementById("toggleSolid").checked;
+          nextGroup.getObjectByName("topMesh").visible = document.getElementById("toggleTop").checked;
+          nextGroup.getObjectByName("bottomMesh").visible = document.getElementById("toggleBottom").checked;
+          nextGroup.getObjectByName("cylMesh").visible = document.getElementById("toggleCyl").checked;
+          nextGroup.getObjectByName("projMesh").visible = document.getElementById("toggleProj").checked;
+        } catch (error) {
+          disposeGroup(nextGroup);
+          throw error;
+        }
+
+        const previousGroup = currentGroup;
+        scene.remove(previousGroup);
+        disposeGroup(previousGroup);
+        currentGroup = nextGroup;
+        scene.add(currentGroup);
+        currentRadius = radius;
+        currentCenterZ = centerZ;
+        rebuildAxes(radius);
+        setDefaultView(radius, centerZ);
+      } catch (error) {
+        errorMessage.textContent = error.message;
+        errorMessage.classList.remove("hidden");
+      }
+    }
+
+    function buildEquation() {
+      const equationError = document.getElementById("equationError");
+      equationError.classList.add("hidden");
+      try {
+        const text = document.getElementById("equationExpr").value.trim();
+        const L = Number(document.getElementById("domainL").value);
+        if (!Number.isFinite(L) || L <= 0) throw new Error("L 必须是大于 0 的有限数字");
+        const pieces = text.split("=");
+        if (pieces.length !== 2 || !pieces[0].trim() || !pieces[1].trim()) throw new Error("请输入一个等式，例如 x = y 或 x + y + z = 1");
+        const left = compileExpression(pieces[0]);
+        const right = compileExpression(pieces[1]);
+        const F = (x, y, z) => left(x, y, z) - right(x, y, z);
+        const origin = F(0, 0, 0);
+        const a = F(1, 0, 0) - origin;
+        const b = F(0, 1, 0) - origin;
+        const c = F(0, 0, 1) - origin;
+        const linearSamples = [[1.7, -0.8, 2.2], [-2.1, 0.4, -1.3], [0.3, 2.5, -0.6]];
+        const isLinear = linearSamples.every(([x, y, z]) => {
+          const actual = F(x, y, z);
+          const predicted = origin + a * x + b * y + c * z;
+          return Number.isFinite(actual) && Math.abs(actual - predicted) <= 1e-6 * Math.max(1, Math.abs(actual), Math.abs(predicted));
+        });
+
+        if (isLinear && Math.abs(c) < 1e-9) {
+          if (Math.abs(a) < 1e-9 && Math.abs(b) < 1e-9) throw new Error("这个方程不能确定一个平面，请检查方程内容");
+          const points = [];
+          const addPoint = (x, y) => {
+            if (x < -L - 1e-8 || x > L + 1e-8 || y < -L - 1e-8 || y > L + 1e-8) return;
+            if (!points.some(([px, py]) => Math.hypot(px - x, py - y) < 1e-7)) points.push([x, y]);
+          };
+          if (Math.abs(b) > 1e-9) {
+            addPoint(-L, -(origin + a * -L) / b);
+            addPoint(L, -(origin + a * L) / b);
+          }
+          if (Math.abs(a) > 1e-9) {
+            addPoint(-(origin + b * -L) / a, -L);
+            addPoint(-(origin + b * L) / a, L);
+          }
+          if (points.length < 2) throw new Error("平面没有穿过当前绘图区间；请增大 L");
+          const [[x0, y0], [x1, y1]] = points;
+          const positions = [x0, y0, -L, x1, y1, -L, x1, y1, L, x0, y0, L];
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+          geometry.setIndex([0, 1, 2, 0, 2, 3]);
+          geometry.computeVertexNormals();
+          const nextGroup = new THREE.Group();
+          const plane = new THREE.Mesh(geometry, makeMaterial(0x06b6d4, 0.72, false));
+          plane.name = "planeMesh";
+          plane.visible = document.getElementById("togglePlane").checked;
+          nextGroup.add(plane);
+          const previousGroup = currentGroup;
+          scene.remove(previousGroup); disposeGroup(previousGroup);
+          currentGroup = nextGroup; scene.add(currentGroup);
+          currentRadius = L; currentCenterZ = 0;
+          rebuildAxes(L); setDefaultView(L, 0);
+          return;
+        }
+
+        const zFunction = (x, y) => {
+          const f0 = F(x, y, 0);
+          const f1 = F(x, y, 1);
+          const f2 = F(x, y, 2);
+          const coefficient = f1 - f0;
+          if (!Number.isFinite(f0) || !Number.isFinite(coefficient) || Math.abs(coefficient) < 1e-9 || Math.abs((f2 - f1) - coefficient) > 1e-6 * Math.max(1, Math.abs(coefficient))) {
+            throw new Error("请使用 z = f(x,y) 曲面，或线性平面（例如 x = y）");
+          }
+          return -f0 / coefficient;
+        };
+        let minZ = Infinity;
+        let maxZ = -Infinity;
+        for (let row = 0; row <= 12; row += 1) for (let col = 0; col <= 12; col += 1) {
+          const z = zFunction(-L + 2 * L * col / 12, -L + 2 * L * row / 12);
+          minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+        }
+        const nextGroup = new THREE.Group();
+        const plane = new THREE.Mesh(makeRectSurface(-L, L, -L, L, zFunction), makeMaterial(0x06b6d4, 0.72, false));
+        plane.name = "planeMesh";
+        plane.visible = document.getElementById("togglePlane").checked;
+        nextGroup.add(plane);
+        const previousGroup = currentGroup;
+        scene.remove(previousGroup); disposeGroup(previousGroup);
+        currentGroup = nextGroup; scene.add(currentGroup);
+        currentRadius = L; currentCenterZ = (minZ + maxZ) / 2;
+        rebuildAxes(L); setDefaultView(L, currentCenterZ);
+      } catch (error) {
+        equationError.textContent = error.message;
+        equationError.classList.remove("hidden");
+      }
+    }
+
+    function setMode(mode) {
+      document.body.classList.remove("python-only-view");
+      document.getElementById("equationPanel").classList.toggle("hidden", mode !== "equation");
+      document.getElementById("solidPanel").classList.toggle("hidden", mode !== "solid");
+      document.getElementById("codePanel").classList.toggle("hidden", mode !== "code");
+      document.getElementById("solidLayers").classList.toggle("hidden", mode !== "solid");
+      document.getElementById("equationLayers").classList.toggle("hidden", mode !== "equation");
+      document.getElementById("resetView").classList.toggle("hidden", mode === "code");
+      document.querySelector(".right-panel").classList.toggle("hidden", mode === "code");
+      document.querySelector(".left-panel").classList.toggle("code-mode", mode === "code");
+      document.querySelector(".bottom-hint").classList.toggle("hidden", mode === "code");
+      document.body.classList.toggle("code-fullscreen", mode === "code");
+      document.querySelectorAll(".modeBtn").forEach((button) => {
+        button.classList.toggle("bg-cyan-700", button.dataset.mode === mode);
+        button.classList.toggle("text-white", button.dataset.mode === mode);
+        button.classList.toggle("bg-slate-800", button.dataset.mode !== mode);
+        button.classList.toggle("text-slate-300", button.dataset.mode !== mode);
+      });
+      if (mode === "equation") buildEquation();
+      if (mode === "solid") buildGeometry();
+    }
+
+    let pythonSandboxReady = null;
+    let pythonRunCounter = 0;
+    let pendingPythonRun = null;
+    const pythonSandbox = document.getElementById("pyodideSandbox");
+    const pythonStatus = document.getElementById("pythonStatus");
+
+    function ensurePythonSandbox() {
+      if (pythonSandboxReady) return pythonSandboxReady;
+      const version = "v314.0.7";
+      const base = `https://cdn.jsdelivr.net/pyodide/${version}/full/`;
+      const sandboxDocument = `<!doctype html><html><head><meta charset="utf-8"><script src="${base}pyodide.js"><\/script></head><body><script>
+        const PYODIDE_BASE = ${JSON.stringify(base)};
+        let pyodideInstance = null;
+        let initialization = null;
+        async function prepareRuntime() {
+          if (initialization) return initialization;
+          initialization = (async () => {
+            parent.postMessage({type: "status", text: "首次启动：正在加载浏览器内 Python…"}, "*");
+            pyodideInstance = await loadPyodide({indexURL: PYODIDE_BASE});
+            parent.postMessage({type: "status", text: "正在加载 NumPy 和 Plotly…"}, "*");
+            await pyodideInstance.loadPackage(["micropip", "numpy"]);
+            await pyodideInstance.runPythonAsync("import micropip\\nawait micropip.install('plotly')");
+            parent.postMessage({type: "ready"}, "*");
+            return pyodideInstance;
+          })();
+          return initialization;
+        }
+        window.addEventListener("message", async (event) => {
+          const request = event.data;
+          if (!request || request.type !== "run") return;
+          try {
+            const py = await prepareRuntime();
+            if (request.code.includes("matplotlib")) throw new Error("网页版目前支持 Plotly 绘图代码；请使用 plotly.graph_objects 并调用 fig.show()。");
+            if (/\\b(?:import|from)\\s+(?:numpy|np)\\b/.test(request.code)) await py.loadPackage("numpy");
+            py.globals.set("_user_source", request.code);
+            const wrapper = [
+              "import plotly.basedatatypes as _basedatatypes",
+              "_captured = {}",
+              "def _capture_show(self, *args, **kwargs):",
+              "    _captured['figure'] = self.to_json()",
+              "_basedatatypes.BaseFigure.show = _capture_show",
+              "_namespace = {'__name__': '__main__'}",
+              "exec(_user_source, _namespace, _namespace)",
+              "_figure_json = _captured.get('figure')",
+              "if _figure_json is None:",
+              "    _figure = _namespace.get('fig', _namespace.get('figure'))",
+              "    if _figure is not None:",
+              "        _figure_json = _figure.to_json()",
+              "if _figure_json is None:",
+              "    raise RuntimeError('没有找到 Plotly 图。请创建 fig 并调用 fig.show()。')"
+            ].join("\\n");
+            await py.runPythonAsync(wrapper);
+            const figureProxy = py.globals.get("_figure_json");
+            const figureJson = figureProxy.toString();
+            figureProxy.destroy();
+            parent.postMessage({type: "plot", id: request.id, json: figureJson}, "*");
+          } catch (error) {
+            parent.postMessage({type: "error", id: request.id, message: error?.message || String(error)}, "*");
+          }
+        });
+        prepareRuntime().catch((error) => parent.postMessage({type: "error", message: error?.message || String(error)}, "*"));
+      <\/script></body></html>`;
+
+      pythonSandboxReady = new Promise((resolve, reject) => {
+        const timeout = window.setTimeout(() => reject(new Error("Python 环境加载超时，请检查网络后重试。")), 180000);
+        const onMessage = (event) => {
+          if (event.source !== pythonSandbox.contentWindow) return;
+          const message = event.data;
+          if (message?.type === "status") pythonStatus.textContent = message.text;
+          if (message?.type === "ready") {
+            window.clearTimeout(timeout);
+            window.removeEventListener("message", onMessage);
+            pythonStatus.textContent = "Python 环境已就绪。";
+            resolve();
+          }
+          if (message?.type === "error" && !message.id) {
+            window.clearTimeout(timeout);
+            window.removeEventListener("message", onMessage);
+            reject(new Error(message.message));
+          }
+        };
+        window.addEventListener("message", onMessage);
+        pythonSandbox.srcdoc = sandboxDocument;
+      });
+      return pythonSandboxReady;
+    }
+
+    function ensurePlotlyJs() {
+      if (window.Plotly) return Promise.resolve();
+      if (window.plotlyJsLoading) return window.plotlyJsLoading;
+      window.plotlyJsLoading = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.plot.ly/plotly-4.1.1.min.js";
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Plotly 图表库加载失败，请检查网络后重试。"));
+        document.head.appendChild(script);
+      });
+      return window.plotlyJsLoading;
+    }
+
+    function renderPythonFigure(json) {
+      const figure = JSON.parse(json);
+      const layout = {
+        ...figure.layout,
+        autosize: true,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        paper_bgcolor: figure.layout?.paper_bgcolor || "#0b0f19",
+        plot_bgcolor: figure.layout?.plot_bgcolor || "#0b0f19",
+      };
+      const plot = document.getElementById("pythonPlot");
+      Plotly.newPlot(plot, figure.data, layout, {responsive: true, displayModeBar: false, scrollZoom: true, displaylogo: false})
+        .then(() => {
+          document.getElementById("pythonEditorView").classList.add("hidden");
+          document.getElementById("pythonVisualView").classList.remove("hidden");
+          document.body.classList.add("python-only-view");
+          pythonStatus.textContent = "图表已生成。";
+        });
+    }
+
+    window.addEventListener("message", async (event) => {
+      if (event.source !== pythonSandbox.contentWindow) return;
+      const message = event.data;
+      if (message?.type === "status") pythonStatus.textContent = message.text;
+      if (message?.type === "plot" && pendingPythonRun?.id === message.id) {
+        pendingPythonRun.resolve(message.json);
+        pendingPythonRun = null;
+      }
+      if (message?.type === "error" && pendingPythonRun?.id === message.id) {
+        pendingPythonRun.reject(new Error(message.message));
+        pendingPythonRun = null;
+      }
+    });
+
+    document.getElementById("runPythonCode").addEventListener("click", async () => {
+      const button = document.getElementById("runPythonCode");
+      const code = document.getElementById("pythonCode").value;
+      button.disabled = true;
+      pythonStatus.textContent = "正在准备浏览器内 Python…";
+      try {
+        await Promise.all([ensurePythonSandbox(), ensurePlotlyJs()]);
+        const id = ++pythonRunCounter;
+        const result = new Promise((resolve, reject) => { pendingPythonRun = {id, resolve, reject}; });
+        pythonSandbox.contentWindow.postMessage({type: "run", id, code}, "*");
+        const figureJson = await result;
+        renderPythonFigure(figureJson);
+      } catch (error) {
+        pythonStatus.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById("editPythonCode").addEventListener("click", () => {
+      document.body.classList.remove("python-only-view");
+      document.getElementById("pythonVisualView").classList.add("hidden");
+      document.getElementById("pythonEditorView").classList.remove("hidden");
+    });
+
+    document.querySelectorAll(".modeBtn").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
+    document.getElementById("equationBtn").addEventListener("click", buildEquation);
+    document.getElementById("togglePlane").addEventListener("change", (event) => {
+      const mesh = currentGroup.getObjectByName("planeMesh"); if (mesh) mesh.visible = event.target.checked;
+    });
+    document.getElementById("previewCodeBtn").addEventListener("click", () => {
+      const code = document.getElementById("htmlCode").value.trim();
+      const error = document.getElementById("codeError");
+      error.classList.add("hidden");
+      if (!code) { error.textContent = "先粘贴 HTML 代码再预览。"; error.classList.remove("hidden"); return; }
+      const page = /<html[\s>]/i.test(code) || /<!doctype/i.test(code) ? code : `<!doctype html><html><head><meta charset="utf-8"></head><body>${code}</body></html>`;
+      const frame = document.getElementById("codePreview");
+      frame.srcdoc = page; frame.classList.remove("hidden");
+    });
+    document.getElementById("htmlCodeMode").addEventListener("click", () => {
+      document.getElementById("htmlCodeSection").classList.remove("hidden");
+      document.getElementById("pythonCodeSection").classList.add("hidden");
+      document.getElementById("htmlCodeMode").className = "rounded bg-cyan-700 px-2 py-1.5 text-white";
+      document.getElementById("pythonCodeMode").className = "rounded bg-slate-800 px-2 py-1.5 text-slate-300";
+    });
+    document.getElementById("pythonCodeMode").addEventListener("click", () => {
+      document.getElementById("htmlCodeSection").classList.add("hidden");
+      document.getElementById("pythonCodeSection").classList.remove("hidden");
+      document.getElementById("htmlCodeMode").className = "rounded bg-slate-800 px-2 py-1.5 text-slate-300";
+      document.getElementById("pythonCodeMode").className = "rounded bg-cyan-700 px-2 py-1.5 text-white";
+    });
+
+    document.getElementById("updateBtn").addEventListener("click", buildGeometry);
+    document.getElementById("toggleSolid").addEventListener("change", (event) => {
+      currentGroup.visible = event.target.checked;
+    });
+    document.getElementById("toggleTop").addEventListener("change", (event) => {
+      const mesh = currentGroup.getObjectByName("topMesh");
+      if (mesh) mesh.visible = event.target.checked;
+    });
+    document.getElementById("toggleBottom").addEventListener("change", (event) => {
+      const mesh = currentGroup.getObjectByName("bottomMesh");
+      if (mesh) mesh.visible = event.target.checked;
+    });
+    document.getElementById("toggleCyl").addEventListener("change", (event) => {
+      const mesh = currentGroup.getObjectByName("cylMesh");
+      if (mesh) mesh.visible = event.target.checked;
+    });
+    document.getElementById("toggleProj").addEventListener("change", (event) => {
+      const mesh = currentGroup.getObjectByName("projMesh");
+      if (mesh) mesh.visible = event.target.checked;
+    });
+    document.getElementById("resetView").addEventListener("click", () => {
+      setDefaultView();
+    });
+
+    setMode("equation");
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    });
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
